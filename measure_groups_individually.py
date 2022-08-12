@@ -27,7 +27,7 @@ for expval in E.get_expectationvalues():
     # need to make an objective out of this
     expval = tq.Objective(args=[expval])
     f = tq.compile(expval)
-    value = f(variables, samples="auto") # just an example
+    value = f(variables, samples=1000) # just an example
     values.append(value)
 
 print("individual values are: ", values)
