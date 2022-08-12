@@ -613,7 +613,13 @@ def ExpectationValue(U, H, optimize_measurements: bool = False, *args, **kwargs)
     Initialize an Objective which is just a single expectationvalue
     """
     if optimize_measurements:
-        commuting_parts = compile_commuting_parts(H=H)
+        if optimize_measurements is True:
+            # in this case there are no options
+            # and we will use the default values (if they can be generated)
+            options = None
+        else:
+            options = optimize_measurements
+        commuting_parts = compile_commuting_parts(H=H, options=options, *args, **kwargs)
         result = 0.0
         for HandU in commuting_parts:
             qwc, Um = HandU

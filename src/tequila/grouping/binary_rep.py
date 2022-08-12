@@ -232,7 +232,7 @@ class BinaryHamiltonian:
         gram = np.block([[np.zeros((n,n)), np.eye(n)], [np.eye(n), np.zeros((n,n))]])
         return matrix @ gram @ matrix.T % 2
 
-    def commuting_groups(self, method='rlf', condition="fc", overlap_aux=None):
+    def commuting_groups(self, method='rlf', condition="fc", overlap_aux=None, *args, **kwargs):
         """
         Notes
         ----------
@@ -250,6 +250,10 @@ class BinaryHamiltonian:
         ----------
         List of BinaryHamiltonian's
         """
+        
+        print("getting: args = ", args)
+        print("getting: kwargs = ", kwargs)
+
         def method_class(method, condition):
             """
             Return the class that the method belongs to: One from Minimum clique cover (mcc)
