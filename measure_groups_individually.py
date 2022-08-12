@@ -3,7 +3,7 @@ import tequila as tq
 H = tq.paulis.Z(0) + tq.paulis.Z([0,1]) + tq.paulis.X(1) + tq.paulis.X([0,1]) # should be 2 groups
 U = tq.gates.H([0,1]) + tq.gates.Ry(angle="a", target=0)
 
-E = tq.ExpectationValue(H=H, U=U, optimize_measurements=True, suggested_samples=samples)
+E = tq.ExpectationValue(H=H, U=U, optimize_measurements=True)
 
 print("non optimized expectation value")
 tmp = tq.ExpectationValue(H=H, U=U)
@@ -20,6 +20,12 @@ variables = {"a":1.0}
 compiled = tq.compile(E) # options: e.g. backend="cirq","qulacs","qiskit" ... 
 evaluated = compiled(variables, samples=None) # set samples to an integer for shot based simulation otherwise it simulates the expectation vaue exactly
 print("value is = ", evaluated)
+
+
+#####
+# Stuff from here not necessary once we have integration of current code
+# just to demonstrate how to access fragments if one wants to toy with it
+#####
 
 # evaluate the groups individually
 values = []
