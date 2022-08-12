@@ -9,3 +9,5 @@ E = tq.ExpectationValue(H=H , U=U, optimize_measurements=True)
 # number_of_iterations = [None, integer]
 E = tq.ExpectationValue(H=H , U=U, optimize_measurements={"asd":"asd", "other":1})
 
+tq.simulate(E, samples=100)
+

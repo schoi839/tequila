@@ -19,13 +19,16 @@ def compile_commuting_parts(H, method="zb", *args, **kwargs):
     """
     if method is None or method.lower() == "zb":
         # @ Zack
-        return _compile_commuting_parts_zb(H, *args, **kwargs)
+        result =  _compile_commuting_parts_zb(H, *args, **kwargs)
     else:
         # original implementation of Thomson (T.C. Yen)
         binary_H = BinaryHamiltonian.init_from_qubit_hamiltonian(H)
         commuting_parts = binary_H.commuting_groups(*args, **kwargs)
-        return [cH.get_qubit_wise() for cH in commuting_parts]
-
+        result =  [cH.get_qubit_wise() for cH in commuting_parts]
+    
+    # remains to be specified
+    suggested_samples = [None]*len(result)
+    return result, suggested_samples
 
 def _compile_commuting_parts_zb(H, *args, **kwargs):
     # @ Zack add main function here and rest in this file
