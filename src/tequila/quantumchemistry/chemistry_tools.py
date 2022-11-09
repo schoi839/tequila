@@ -119,6 +119,25 @@ class ParametersQC:
     multiplicity: int = 1
     charge: int = 0
     name: str = None
+    frozen_core: bool = True
+    
+    def get_number_of_core_electrons(self):
+        result = 0
+        for atom in self.get_atoms():
+            n=self.get_atom_number(atom)
+            if n>2:
+                result += 2 
+            if n>10:
+                result += 8
+            if n>18:
+                result += 18
+            if n>36:
+                result += 36
+            if n>45:
+                result += 54
+            if n>86:
+                result += 86
+        return result
 
     @property
     def n_electrons(self, *args, **kwargs):
@@ -134,10 +153,11 @@ class ParametersQC:
             return atom_numbers[name.lower()]
         try:
             import periodictable as pt
-            atom = name.lower()
+            atom = list(name.lower())
             atom[0] = atom[0].upper()
+            atom = ''.join(atom)
             element = pt.elements.symbol(atom)
-            return element.number()
+            return element.number
         except:
             raise TequilaException(
                 "can not assign atomic number to element {}\npip install periodictable will fix it".format(atom))
@@ -163,7 +183,7 @@ class ParametersQC:
                 if self.name is None:
                     drop_ones = lambda x: "" if x == 1 else x
                     self.name = "".join(["{}{}".format(x, drop_ones(atoms.count(x))) for x in atom_names])
-        self.name = self.name.lower()
+            self.name = self.name.lower()
 
         if self.geometry is None:
             self.geometry = self.name + ".xyz"

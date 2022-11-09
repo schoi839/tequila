@@ -44,6 +44,7 @@ class QuantumChemistryBase:
     def __init__(self, parameters: ParametersQC,
                  transformation: typing.Union[str, typing.Callable] = None,
                  active_orbitals: list = None,
+                 frozen_orbitals: list = None,
                  reference_orbitals: list = None,
                  orbitals: list = None,
                  *args,
@@ -54,6 +55,7 @@ class QuantumChemistryBase:
         parameters: the quantum chemistry parameters handed over as instance of the ParametersQC class (see there for content)
         transformation: the fermion to qubit transformation (default is JordanWigner). See encodings.py for supported encodings or to extend
         active_orbitals: list of active orbitals (others will be frozen, if we have N-electrons then the first N//2 orbitals will be considered occpied when creating the active space)
+        frozen_orbitals: convenience (will be removed from list of active orbitals)
         reference_orbitals: give list of orbitals that shall be considered occupied when creating a possible active space (default is the first N//2). The indices are expected to be total indices (including possible frozen orbitals in the counting)
         orbitals: information about the orbitals (should be in OrbitalData format, can be a dictionary)
         args
@@ -68,6 +70,16 @@ class QuantumChemistryBase:
         if reference_orbitals is None:
             reference_orbitals = [i for i in range(n_electrons // 2)]
         self._reference_orbitals = reference_orbitals
+        
+        # determine frozen core automatically if set
+        # only if molecule is computed from scratch and not passed down from above
+        overriding_freeze_instruction = n_electrons != parameters.n_electrons
+        overriding_freeze_instruction = overriding_freeze_instruction or frozen_orbitals is not None
+        if not overriding_freeze_instruction and self.parameters.frozen_core:
+            n_core_electrons = self.parameters.get_number_of_core_electrons()
+            if frozen_orbitals is None:
+                frozen_orbitals = [i for i in range(n_core_electrons//2)]
+            
 
         # initialize integral manager
         if "integral_manager" in kwargs:
@@ -75,7 +87,7 @@ class QuantumChemistryBase:
         else:
             self.integral_manager = self.initialize_integral_manager(active_orbitals=active_orbitals,
                                                                      reference_orbitals=reference_orbitals,
-                                                                     orbitals=orbitals, *args,
+                                                                     orbitals=orbitals, frozen_orbitals=frozen_orbitals, *args,
                                                                      **kwargs)
 
         self.transformation = self._initialize_transformation(transformation=transformation, *args, **kwargs)
@@ -404,6 +416,10 @@ class QuantumChemistryBase:
             active_orbitals = [i for i in range(one_body_integrals.shape[0])]
             if "active_orbitals" in kwargs and kwargs["active_orbitals"] is not None:
                 active_orbitals = kwargs["active_orbitals"]
+            if "frozen_orbitals" in kwargs and kwargs["frozen_orbitals"] is not None:
+                for fo in kwargs["frozen_orbitals"]:
+                    if fo in active_orbitals:
+                        active_orbitals.remove(fo)
 
             reference_orbitals = [i for i in range(n_electrons // 2)]
             if "reference_orbitals" in kwargs and kwargs["reference_orbitals"] is not None:
@@ -804,9 +820,111 @@ class QuantumChemistryBase:
                                                            assume_real=assume_real)
 
         return UD
+    
+    def make_spa_ansatz(self, edges, hcb=False,  use_units_of_pi=False, label=None, optimize=None, ladder=True):
+        """
+        Separable Pair Ansatz (SPA) for general molecules
+        see arxiv: 
+        edges: a list of tuples that contain the orbital indices for the specific pairs
+               one example: edges=[(0,), (1,2,3), (4,5)] are three pairs, one with a single orbital [0], one with three orbitals [1,2,3] and one with two orbitals [4,5]
+        hcb: spa ansatz in the hcb (hardcore-boson) space without transforming to current transformation (e.g. JordanWigner), use this for example in combination with the self.make_hardcore_boson_hamiltonian() and see the article above for more info
+        use_units_of_pi: circuit angles in units of pi
+        label: label the variables in the circuit
+        optimize: optimize the circuit construction (see article). Results in shallow circuit from Ry and CNOT gates
+        ladder: if true the excitation pattern will be local. E.g. in the pair from orbitals (1,2,3) we will have the excitations 1->2 and 2->3, if set to false we will have standard coupled-cluster style excitations - in this case this would be 1->2 and 1->3 
+        """
+        if edges is None:
+            raise TequilaException("SPA ansatz within a standard orbital basis needs edges. Please provide with the keyword edges.\nExample: edges=[(0,1,2),(3,4)] would correspond to two edges created from orbitals (0,1,2) and (3,4), note that orbitals can only be assigned to a single edge")
+        
+        # sanity checks
+        # current SPA implementation needs even number of electrons
+        if self.n_electrons % 2 != 0:
+            raise TequilaException("need even number of electrons for SPA ansatz.\n{} active electrons".format(self.n_electrons))
+        # making sure that enough edges are assigned
+        n_edges = len(edges)
+        if len(edges) != self.n_electrons//2:
+            raise TequilaException("number of edges need to be equal to number of active electrons//2\n{} edges given\n{} active electrons\nfrozen core is {}".format(len(edges), self.n_electrons, self.parameters.frozen_core))
+        # making sure that orbitals are uniquely assigned to edges
+        for edge in edges:
+            for orbital in edge:
+                for edge2 in edges:
+                    if edge2==edge:
+                        continue
+                    elif orbital in edge2:
+                        raise TequilaException("make_spa_ansatz: faulty list of edges, orbitals are overlapping e.g. orbital {} is in edge {} and edge {}".format(orbital, edge, edge2))
+        
+        # auto assign if the circuit construction is optimized
+        # depending on the current qubit encoding (if hcb_to_me is implemnented we can optimize)
+        if optimize is None:
+            try:
+                have_hcb_to_me = self.hcb_to_me() is not None
+            except:
+                have_hcb_to_me = False
+            if have_hcb_to_me: 
+                optimize=True
+            else:
+                optimize=False
+
+        U = QCircuit()
+        
+        # construction of the optimized circuit
+        if optimize:
+            for edge in edges:
+                U += gates.X(2*edge[0])
+                previous = edge[0]
+                if len(edge)==1:
+                    continue
+                for orbital in edge[1:]:
+                    c=previous
+                    if not ladder:
+                        c=edge[0]
+                    angle=Variable(name=((c, orbital), "D" ,label))
+                    if use_units_of_pi:
+                        angle=angle*numpy.pi
+                    if previous == edge[0]:
+                        U += gates.Ry(angle=angle, target=2*orbital, control=None)
+                    else:
+                        U += gates.Ry(angle=angle, target=2*orbital, control=2*c)
+                    U += gates.CNOT(2*orbital,2*c)
+                    previous = orbital
+
+            if not hcb:
+                U += self.hcb_to_me()
+        else:
+            # construction of the non-optimized circuit
+            U = self.prepare_reference()
+            # will only work if the first orbitals in the edges are the reference orbitals
+            sane = True
+            reference_orbitals = self.reference_orbitals
+            for edge in edges:
+                if self.orbitals[edge[0]] not in reference_orbitals:
+                    sane=False
+                if len(edge)>1:
+                    for orbital in edge[1:]:
+                        if self.orbitals[orbital] in reference_orbitals:
+                            sane=False
+            if not sane:
+                raise TequilaException("Non-Optimized SPA (e.g. with encodings that are not JW) will only work if the first orbitals of all SPA edges are occupied reference orbitals and all others are not. You gave edges={} and reference_orbitals are {}".format(edges, reference_orbitals))
+
+            for edge in edges:
+                previous = edge[0]
+                if len(edge)>1:
+                    for orbital in edge[1:]:
+                        c = previous
+                        if not ladder:
+                            c = edge[0]
+                        angle = Variable(name=((c,orbital), "D" ,label))
+                        if use_units_of_pi:
+                            angle=angle*numpy.pi
+                        U += self.make_excitation_gate(indices=[(2*c,2*orbital),(2*c+1,2*orbital+1)], angle=angle)
+                        previous = orbital
+        return U
 
     def make_ansatz(self, name: str, *args, **kwargs):
-
+        """
+        Automatically calls the right subroutines to construct ansatze implemented in tequila.chemistry
+        name: namne of the ansatz, examples are: UpCCGSD, UpCCD, SPA, UCCSD, SPA+UpCCD, SPA+GS
+        """
         name = name.lower()
         if name.strip() == "":
             return QCircuit()
@@ -815,16 +933,31 @@ class QuantumChemistryBase:
             U = QCircuit()
             subparts = name.split("+")
             U = self.make_ansatz(name=subparts[0], *args, **kwargs)
+            # making sure the there are is no undesired behaviour in layers after +
+            # reference should not be included since we are not starting from |00...0> anymore
             if "include_reference" in kwargs:
                 kwargs.pop("include_reference")
+            # hcb optimization can also not be used (in almost all cases)
             if "hcb_optimization" in kwargs:
                 kwargs.pop("hcb_optimization")
-            for subpart in subparts[1:]:
-                U += self.make_ansatz(name=subpart, *args, include_reference=False, hcb_optimization=False, **kwargs)
+            # making sure that we have no repeating variable names
+            label = None
+            if "label" in kwargs:
+                label = kwargs["label"]
+                kwargs.pop("label")
+            for i,subpart in enumerate(subparts[1:]):
+                U += self.make_ansatz(name=subpart, *args, label=(label,i), include_reference=False, hcb_optimization=False, **kwargs)
             return U
 
         if name == "uccsd":
             return self.make_uccsd_ansatz(*args, **kwargs)
+        elif "spa" in name.lower():
+            if "hcb" not in kwargs:
+                hcb = False
+                if "hcb" in name.lower():
+                    hcb = True
+                kwargs["hcb"]=hcb
+            return self.make_spa_ansatz(*args, **kwargs)
         elif "d" in name or "s" in name:
             return self.make_upccgsd_ansatz(name=name, *args, **kwargs)
         else:
@@ -932,7 +1065,7 @@ class QuantumChemistryBase:
                                                **kwargs)
 
         for k in range(1, order):
-            U += self.make_upccgsd_layer(include_singles="S" in name, indices=indices, label=(label, k),
+            U += self.make_upccgsd_layer(include_singles=S, include_doubles=D, indices=indices, label=(label, k),
                                          spin_adapt_singles=spin_adapt_singles, neglect_z=neglect_z)
 
         return U

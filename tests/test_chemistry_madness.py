@@ -7,8 +7,10 @@ from tequila.quantumchemistry import INSTALLED_QCHEMISTRY_BACKENDS
 
 has_pyscf = "pyscf" in INSTALLED_QCHEMISTRY_BACKENDS
 
+executable = tq.quantumchemistry.madness_interface.QuantumChemistryMadness.find_executable()
 root = os.environ.get("MAD_ROOT_DIR")
-executable = tq.quantumchemistry.madness_interface.QuantumChemistryMadness.find_executable(root)
+if executable is None:
+    executable = tq.quantumchemistry.madness_interface.QuantumChemistryMadness.find_executable(root)
 print("root = ", root)
 print("executable = ", executable)
 
@@ -35,6 +37,12 @@ def test_madness_he_data():
     print(result.energy)
     assert (numpy.isclose(-2.87761809, result.energy, atol=1.e-5))
 
+@pytest.mark.skipif(executable is None, reason="madness was not found")
+def test_madness_frozen_core():
+    molecule = tq.Molecule(geometry="Li 0.0 0.0 0.0\nLi 0.0 0.0 1.6")
+    assert molecule.n_orbitals == 2
+    assert molecule.parameters.get_number_of_core_electrons() == 4
+
 
 @pytest.mark.skipif(executable is None, reason="madness was not found")
 def test_madness_full_he():
@@ -51,6 +59,16 @@ def test_madness_full_he():
     result = tq.minimize(method="bfgs", objective=E, initial_values=0.0, silent=True)
     assert (numpy.isclose(-2.87761809, result.energy, atol=1.e-5))
 
+@pytest.mark.skipif(executable is None, reason="madness was not found")
+def test_madness_data_io():
+    mol = tq.Molecule(geometry="he 0.0 0.0 0.0")
+    mol = tq.Molecule(geometry="he 0.0 0.0 0.0", n_pno="read")
+
+    mol = tq.Molecule(geometry="he 0.0 0.0 0.0", datadir="1/2/3")
+    mol = tq.Molecule(geometry="he 0.0 0.0 0.0", datadir="1/2/3", n_pno="read")
+
+    mol = tq.Molecule(geometry="he 0.0 0.0 0.0", datadir="1/2/3", name="asd")
+    mol = tq.Molecule(geometry="he 0.0 0.0 0.0", datadir="1/2/3", name="asd", n_pno="read")
 
 @pytest.mark.skipif(executable is None, reason="madness was not found")
 def test_madness_full_li_plus():
